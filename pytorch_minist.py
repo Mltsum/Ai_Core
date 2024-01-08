@@ -5,6 +5,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
 import matplotlib.pyplot as plt
+from mnncompress.pytorch import LOP
 
 n_epochs = 3
 batch_size_train = 64
@@ -34,6 +35,8 @@ test_loader = torch.utils.data.DataLoader(
 
 examples = enumerate(test_loader)
 batch_idx, (example_data, example_targets) = next(examples)
+
+
 # print(example_targets)
 # print(example_data.shape)
 
@@ -66,7 +69,14 @@ class Net(nn.Module):
         x = self.fc2(x)
         return F.log_softmax(x, dim=1)
 
+
 network = Net()
+
+# 对模型进行线性过参数化
+lop = LOP(network)
+# 扩大8倍，指定模型压缩参数文件，更多参数查看api文档
+network = lop.linear_expand_layers(8, "compress_params.bin")
+
 optimizer = optim.SGD(network.parameters(), lr=learning_rate, momentum=momentum)
 
 train_losses = []
@@ -90,8 +100,12 @@ def train(epoch):
                                                                            loss.item()))
             train_losses.append(loss.item())
             train_counter.append((batch_idx * 64) + ((epoch - 1) * len(train_loader.dataset)))
+
+            # 保存模型之前，将过参数化的模型合并，然后保存合并之后的模型 merged_model
+            # merged_model = lop.linear_merge_layers()
             torch.save(network.state_dict(), './model.pth')
             torch.save(optimizer.state_dict(), './optimizer.pth')
+
 
 def test():
     network.eval()
@@ -109,6 +123,7 @@ def test():
         test_loss, correct, len(test_loader.dataset),
         100. * correct / len(test_loader.dataset)))
 
+
 print("开始训练...")
 train(1)
 test()  # 不加这个，后面画图就会报错：x and y must be the same size
@@ -125,7 +140,6 @@ plt.scatter(test_counter, test_losses, color='red')
 plt.legend(['Train Loss', 'Test Loss'], loc='upper right')
 plt.xlabel('number of training examples seen')
 plt.ylabel('negative log likelihood loss')
-
 
 # examples = enumerate(test_loader)
 # batch_idx, (example_data, example_targets) = next(examples)
