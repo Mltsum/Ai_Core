@@ -8,6 +8,10 @@ import torch.nn.functional as F
 import torch.optim as optim
 import matplotlib.pyplot as plt
 
+from mnncompress.pytorch import LSQQuantizer
+
+Quantizer = LSQQuantizer
+
 n_epochs = 3
 batch_size_train = 64
 batch_size_test = 1000
@@ -77,6 +81,15 @@ class Net(nn.Module):
 
 
 network = Net()
+# 加载已经训练好的模型，可以是剪枝之后的
+network.load_state_dict(torch.load("qat_model.pth"))
+# 将模型进行转换，并使用转换后的模型进行训练，测试
+# retain_sparsity=True表示待量化的float模型是稀疏模型，希望叠加量化训练
+# 更多配置请看API部分
+# 注意在model还在cpu上，任何分布式还未生效前调用
+quantizer = Quantizer(network, retain_sparsity=False)
+quant_model = quantizer.convert()
+
 optimizer = optim.SGD(network.parameters(), lr=learning_rate, momentum=momentum)
 
 train_losses = []
@@ -93,6 +106,9 @@ def train(epoch):
         loss = F.nll_loss(output, target)
         loss.backward()
         optimizer.step()
+        # 保存模型之前去掉插入的节点，恢复原模型结构
+        quantizer.strip_qat_ops()
+
         if batch_idx % log_interval == 0:
             print('Train Epoch: {} [{}/{} ({:.0f}%)]\tLoss: {:.6f}'.format(epoch, batch_idx * len(data),
                                                                            len(train_loader.dataset),
@@ -100,8 +116,13 @@ def train(epoch):
                                                                            loss.item()))
             train_losses.append(loss.item())
             train_counter.append((batch_idx * 64) + ((epoch - 1) * len(train_loader.dataset)))
-            torch.save(network.state_dict(), './model.pth')
+            torch.save(network.state_dict(), './quant_model_index.pt')
             torch.save(optimizer.state_dict(), './optimizer.pth')
+
+            # 保存MNN模型压缩参数文件，必须要保存这个文件！
+            # 如果进行量化的模型有剪枝，请将剪枝时生成的MNN模型压缩参数文件 "compress_params.bin" 文件名 在下方传入，并将 append 设置为True
+            # append表示追加，如果此模型仅进行量化，append设为False即可！
+            # quantizer.save_compress_params("quant_model_index.onnx", "compress_params_index.bin", append=False)
 
 
 def test():
@@ -127,6 +148,9 @@ test()  # 不加这个，后面画图就会报错：x and y must be the same siz
 
 print("开始多轮训练...")
 for epoch in range(1, n_epochs + 1):
+    # 每次训练之前加上这一句，准备好量化训练图
+    quantizer.resume_qat_graph()
+
     train(epoch)
     test()
 print("初步训练结束...")

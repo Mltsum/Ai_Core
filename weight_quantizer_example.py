@@ -58,8 +58,6 @@ test_loader = torch.utils.data.DataLoader(
 在 __init()__中定义网络的层
 重写(override)父类的抽象方法forward()
 """
-
-
 class Net(nn.Module):
     def __init__(self):
         super(Net, self).__init__()
