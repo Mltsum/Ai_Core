@@ -1,5 +1,3 @@
-from collections import OrderedDict
-
 import torch
 import torchvision
 from torch.utils.data import DataLoader
@@ -7,6 +5,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
 import matplotlib.pyplot as plt
+from mnncompress.pytorch import LOP
 
 n_epochs = 3
 batch_size_train = 64
@@ -34,8 +33,8 @@ test_loader = torch.utils.data.DataLoader(
                                ])),
     batch_size=batch_size_test, shuffle=True)
 
-# examples = enumerate(test_loader)
-# batch_idx, (example_data, example_targets) = next(examples)
+examples = enumerate(test_loader)
+batch_idx, (example_data, example_targets) = next(examples)
 
 
 # print(example_targets)
@@ -52,100 +51,32 @@ test_loader = torch.utils.data.DataLoader(
 # plt.show()
 
 
-"""
-继承 nn.Module
-在 __init()__中定义网络的层
-重写(override)父类的抽象方法forward()
-"""
 class Net(nn.Module):
-    '''
-
-    自定义的CNN网络，3个卷积层，包含batch norm。2个pool,
-    3个全连接层，包含Dropout
-    输入：28x28x1s
-    '''
     def __init__(self):
         super(Net, self).__init__()
-        self.feature = nn.Sequential(
-            OrderedDict(
-                [
-                    # 28x28x1
-                    ('conv1', nn.Conv2d(in_channels=1,
-                                        out_channels=32,
-                                        kernel_size=5,
-                                        stride=1,
-                                        padding=2)),
-
-                    ('relu1', nn.ReLU()),
-                    ('bn1', nn.BatchNorm2d(num_features=32)),
-
-                    # 28x28x32
-                    ('conv2', nn.Conv2d(in_channels=32,
-                                        out_channels=64,
-                                        kernel_size=3,
-                                        stride=1,
-                                        padding=1)),
-
-                    ('relu2', nn.ReLU()),
-                    ('bn2', nn.BatchNorm2d(num_features=64)),
-                    ('pool1', nn.MaxPool2d(kernel_size=2)),
-
-                    # 14x14x64
-                    ('conv3', nn.Conv2d(in_channels=64,
-                                        out_channels=128,
-                                        kernel_size=3,
-                                        stride=1,
-                                        padding=1)),
-
-                    ('relu3', nn.ReLU()),
-                    ('bn3', nn.BatchNorm2d(num_features=128)),
-                    ('pool2', nn.MaxPool2d(kernel_size=2)),
-
-                    # 7x7x128
-                    ('conv4', nn.Conv2d(in_channels=128,
-                                        out_channels=64,
-                                        kernel_size=3,
-                                        stride=1,
-                                        padding=1)),
-
-                    ('relu4', nn.ReLU()),
-                    ('bn4', nn.BatchNorm2d(num_features=64)),
-                    ('pool3', nn.MaxPool2d(kernel_size=2)),
-
-                    # out 3x3x64
-
-                ]
-            )
-        )
-
-        self.classifier = nn.Sequential(
-
-
-            OrderedDict(
-                [
-                    ('fc1', nn.Linear(in_features=3 * 3 * 64,
-                                      out_features=128)),
-                    ('dropout1', nn.Dropout2d(p=0.5)),
-
-                    ('fc2', nn.Linear(in_features=128,
-                                      out_features=64)),
-
-                    ('dropout2', nn.Dropout2d(p=0.6)),
-
-                    ('fc3', nn.Linear(in_features=64, out_features=10))
-                ]
-            )
-
-        )
+        self.conv1 = nn.Conv2d(1, 10, kernel_size=5)
+        self.conv2 = nn.Conv2d(10, 20, kernel_size=5)
+        self.conv2_drop = nn.Dropout2d()
+        self.fc1 = nn.Linear(320, 50)
+        self.fc2 = nn.Linear(50, 10)
 
     def forward(self, x):
-        out = self.feature(x)
-        out = out.view(-1, 64 * 3 *3)
-        out = self.classifier(out)
-        return out
+        x = F.relu(F.max_pool2d(self.conv1(x), 2))
+        x = F.relu(F.max_pool2d(self.conv2_drop(self.conv2(x)), 2))
+        x = x.view(-1, 320)
+        x = F.relu(self.fc1(x))
+        x = F.dropout(x, training=self.training)
+        x = self.fc2(x)
+        return F.log_softmax(x, dim=1)
 
 
 network = Net()
+
+# 对模型进行线性过参数化
+lop = LOP(network)
+# 扩大8倍，指定模型压缩参数文件，更多参数查看api文档
+network = lop.linear_expand_layers(8, "compress_params.bin")
+
 optimizer = optim.SGD(network.parameters(), lr=learning_rate, momentum=momentum)
 
 train_losses = []
@@ -169,7 +100,10 @@ def train(epoch):
                                                                            loss.item()))
             train_losses.append(loss.item())
             train_counter.append((batch_idx * 64) + ((epoch - 1) * len(train_loader.dataset)))
-            torch.save(network.state_dict(), './model.pth')
+
+            # 保存模型之前，将过参数化的模型合并，然后保存合并之后的模型 merged_model
+            merged_model = lop.linear_merge_layers()
+            torch.save(merged_model.state_dict(), './model.pth')
             torch.save(optimizer.state_dict(), './optimizer.pth')
 
 

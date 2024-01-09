@@ -7,6 +7,14 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
 import matplotlib.pyplot as plt
+from mnncompress.pytorch.SNIP_level_pruner import SNIPLevelPruner
+from mnncompress.pytorch.SIMD_OC_pruner import SIMDOCPruner
+Pruner = SIMDOCPruner
+
+"""
+模型稀疏之后，可以进一步使用PyTorch训练量化工具进行量化，得到稀疏量化模型。
+
+"""
 
 n_epochs = 3
 batch_size_train = 64
@@ -34,8 +42,8 @@ test_loader = torch.utils.data.DataLoader(
                                ])),
     batch_size=batch_size_test, shuffle=True)
 
-# examples = enumerate(test_loader)
-# batch_idx, (example_data, example_targets) = next(examples)
+examples = enumerate(test_loader)
+batch_idx, (example_data, example_targets) = next(examples)
 
 
 # print(example_targets)
@@ -50,7 +58,6 @@ test_loader = torch.utils.data.DataLoader(
 #     plt.xticks([])
 #     plt.yticks([])
 # plt.show()
-
 
 """
 继承 nn.Module
@@ -146,12 +153,16 @@ class Net(nn.Module):
 
 
 network = Net()
+network.load_state_dict(torch.load("auto_pruning_model.pth"))
 optimizer = optim.SGD(network.parameters(), lr=learning_rate, momentum=momentum)
 
 train_losses = []
 train_counter = []
 test_losses = []
 test_counter = [i * len(train_loader.dataset) for i in range(n_epochs + 1)]
+
+# 将模型进行转换，并使用转换后的模型进行训练，测试
+pruner = SIMDOCPruner(network, total_pruning_iterations=1, sparsity=0.6, debug_info=False)
 
 
 def train(epoch):
@@ -162,6 +173,10 @@ def train(epoch):
         loss = F.nll_loss(output, target)
         loss.backward()
         optimizer.step()
+        # step之后调用pruner的剪枝方法
+        pruner.do_pruning()
+        print(pruner.current_prune_ratios())
+
         if batch_idx % log_interval == 0:
             print('Train Epoch: {} [{}/{} ({:.0f}%)]\tLoss: {:.6f}'.format(epoch, batch_idx * len(data),
                                                                            len(train_loader.dataset),
@@ -198,6 +213,9 @@ print("开始多轮训练...")
 for epoch in range(1, n_epochs + 1):
     train(epoch)
     test()
+
+# 保存MNN模型压缩参数文件，应在剪枝完毕之后进行，建议在保存模型时调用
+pruner.save_compress_params("compress_params.bin", append=False)
 print("初步训练结束...")
 
 fig = plt.figure()
