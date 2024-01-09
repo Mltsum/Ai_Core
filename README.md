@@ -15,3 +15,9 @@ auto_pruning:
 1. 通过本工具得到训练好的float onnx模型，以及MNN模型压缩参数文件
 2. 通过MNN转换工具，输入这两个文件，得到最终的MNN稀疏模型（如果直接部署稀疏的float模型，而不叠加量化，那么转换时需要使用MNNConvert的 --weightQuantBits 8 参数进行转换，才会进行稀疏编码，否则模型大小将不变）
 模型稀疏之后，可以进一步使用PyTorch训练量化工具进行量化，得到稀疏量化模型。
+
+weight_quantizer:
+1. 建议从训练好的float模型进行finetune
+2. 创建WeightQuantizer对象，对原始模型进行转换，然后用转换之后的模型进行训练
+3. 保存onnx模型之前，去掉插入的节点
+4. 保存onnx模型之后，导出MNN模型压缩参数文件，示例代码如下（关注其中quantizer的用法）：
